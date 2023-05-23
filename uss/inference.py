@@ -4,6 +4,7 @@ import pickle
 import time
 import warnings
 from pathlib import Path
+from os.path import exists
 from typing import Dict, List
 
 import librosa
@@ -28,7 +29,7 @@ def separate(args) -> None:
     r"""Do separation for active sound classes."""
 
     # Arguments & parameters
-    audio_path = args.audio_path
+    audio_paths_file = args.audio_paths_file
     levels = args.levels
     class_ids = args.class_ids
     queries_dir = args.queries_dir
@@ -64,8 +65,6 @@ def separate(args) -> None:
         checkpoint_path=checkpoint_path,
     ).to(device)
 
-    # Load audio
-    audio, fs = librosa.load(path=audio_path, sr=sample_rate, mono=True)
 
     # Load pretrained audio tagging model
     at_model_type = "Cnn14"
@@ -89,94 +88,115 @@ def separate(args) -> None:
     if flag_sum == 0:
         levels = [1, 2, 3]
 
-    print("Separating ...")
+    base_output_dir = output_dir
 
-    # Separate by hierarchy
-    if len(levels) > 0:
-        separate_by_hierarchy(
-            audio=audio,
-            sample_rate=sample_rate,
-            segment_samples=segment_samples,
-            at_model=at_model,
-            pl_model=pl_model,
-            device=device,
-            levels=levels,
-            ontology_path=ontology_path,
-            non_sil_threshold=non_sil_threshold,
-            output_dir=output_dir
-        )
+    # Open the file audio_paths_file
+    with open(audio_paths_file, 'r') as xf:
+        for audio_path in xf:
+            audio_path = audio_path.strip()
 
-    # Separate by class IDs
-    elif len(class_ids) > 0:
-        separate_by_class_ids(
-            audio=audio,
-            sample_rate=sample_rate,
-            segment_samples=segment_samples,
-            at_model=at_model,
-            pl_model=pl_model,
-            device=device,
-            class_ids=class_ids,
-            output_dir=output_dir
-        )
+            if not exists(audio_path):
+                continue
+                
+            # Get the filename
+            audio_path_filename = audio_path.split('/')[-1]
 
-    # Calculate query embedding and do separation
-    elif len(queries_dir) > 0:
+            if output_dir.endswith('/'):
+                output_dir = base_output_dir + audio_path_filename
+            else:
+                output_dir = base_output_dir + '/' + audio_path_filename
 
-        print("Calculate query condition ...")
-        query_time = time.time()
+            # Load audio
+            audio, fs = librosa.load(path=audio_path, sr=sample_rate, mono=True)
 
-        query_condition = calculate_query_emb(
-            queries_dir=queries_dir,
-            pl_model=pl_model,
-            sample_rate=sample_rate,
-            remove_sil=True,
-            segment_samples=segment_samples,
-        )
+            print("Separating ...")
 
-        print("Time: {:.3f} s".format(time.time() - query_time))
+            # Separate by hierarchy
+            if len(levels) > 0:
+                separate_by_hierarchy(
+                    audio=audio,
+                    sample_rate=sample_rate,
+                    segment_samples=segment_samples,
+                    at_model=at_model,
+                    pl_model=pl_model,
+                    device=device,
+                    levels=levels,
+                    ontology_path=ontology_path,
+                    non_sil_threshold=non_sil_threshold,
+                    output_dir=output_dir
+                )
 
-        pickle_path = os.path.join(
-            "./query_conditions",
-            "config={}".format(
-                Path(config_yaml).stem),
-            "{}.pkl".format(
-                Path(queries_dir).stem))
+            # Separate by class IDs
+            elif len(class_ids) > 0:
+                separate_by_class_ids(
+                    audio=audio,
+                    sample_rate=sample_rate,
+                    segment_samples=segment_samples,
+                    at_model=at_model,
+                    pl_model=pl_model,
+                    device=device,
+                    class_ids=class_ids,
+                    output_dir=output_dir
+                )
 
-        os.makedirs(os.path.dirname(pickle_path), exist_ok=True)
+            # Calculate query embedding and do separation
+            elif len(queries_dir) > 0:
 
-        pickle.dump(query_condition, open(pickle_path, 'wb'))
-        print("Write query condition to {}".format(pickle_path))
+                print("Calculate query condition ...")
+                query_time = time.time()
 
-        output_path = os.path.join(
-            output_dir, "query={}.wav".format(
-                Path(queries_dir).stem))
+                query_condition = calculate_query_emb(
+                    queries_dir=queries_dir,
+                    pl_model=pl_model,
+                    sample_rate=sample_rate,
+                    remove_sil=True,
+                    segment_samples=segment_samples,
+                )
 
-        separate_by_query_condition(
-            audio=audio,
-            segment_samples=segment_samples,
-            sample_rate=sample_rate,
-            query_condition=query_condition,
-            pl_model=pl_model,
-            output_path=output_path,
-        )
+                print("Time: {:.3f} s".format(time.time() - query_time))
 
-    # Load pre-calculated query embedding and do separation
-    elif Path(query_emb_path).is_file():
+                pickle_path = os.path.join(
+                    "./query_conditions",
+                    "config={}".format(
+                        Path(config_yaml).stem),
+                    "{}.pkl".format(
+                        Path(queries_dir).stem))
 
-        query_condition = pickle.load(open(query_emb_path, 'rb'))
+                os.makedirs(os.path.dirname(pickle_path), exist_ok=True)
 
-        output_path = os.path.join(
-            output_dir, "query={}.wav".format(
-                Path('111').stem))
+                pickle.dump(query_condition, open(pickle_path, 'wb'))
+                print("Write query condition to {}".format(pickle_path))
 
-        separate_by_query_condition(
-            audio=audio,
-            segment_samples=segment_samples,
-            sample_rate=sample_rate,
-            query_condition=query_condition,
-            pl_model=pl_model,
-            output_path=output_path,
-        )
+                output_path = os.path.join(
+                    output_dir, "query={}.wav".format(
+                        Path(queries_dir).stem))
+
+                separate_by_query_condition(
+                    audio=audio,
+                    segment_samples=segment_samples,
+                    sample_rate=sample_rate,
+                    query_condition=query_condition,
+                    pl_model=pl_model,
+                    output_path=output_path,
+                )
+
+            # Load pre-calculated query embedding and do separation
+            elif Path(query_emb_path).is_file():
+
+                query_condition = pickle.load(open(query_emb_path, 'rb'))
+
+                output_path = os.path.join(
+                    output_dir, "query={}.wav".format(
+                        Path('111').stem))
+
+                separate_by_query_condition(
+                    audio=audio,
+                    segment_samples=segment_samples,
+                    sample_rate=sample_rate,
+                    query_condition=query_condition,
+                    pl_model=pl_model,
+                    output_path=output_path,
+                )
 
 
 def load_ss_model(
